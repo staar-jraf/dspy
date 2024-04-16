@@ -107,13 +107,18 @@ class GPT3(LM):
             total_tokens = usage_data.get("total_tokens")
             logging.info(f"{total_tokens}")
 
-    def basic_request(self, prompt: str, **kwargs):
+    def basic_request(self, prompt: list[dict[str, Any]], **kwargs):
         raw_kwargs = kwargs
 
         kwargs = {**self.kwargs, **kwargs}
         if self.model_type == "chat":
             # caching mechanism requires hashable kwargs
-            messages = [{"role": "user", "content": prompt}]
+            messages = []
+            for pt in prompt:
+                if set(pt.keys()) == {"role", "content"}:
+                    messages.append(pt)
+                else:
+                    logging.warning(f"Invalid message: {pt}")
             if self.system_prompt:
                 messages.insert(0, {"role": "system", "content": self.system_prompt})
             kwargs["messages"] = messages
@@ -140,7 +145,7 @@ class GPT3(LM):
         max_time=1000,
         on_backoff=backoff_hdlr,
     )
-    def request(self, prompt: str, **kwargs):
+    def request(self, prompt: list[dict[str, Any]], **kwargs):
         """Handles retreival of GPT-3 completions whilst handling rate limiting and caching."""
         if "model_type" in kwargs:
             del kwargs["model_type"]
@@ -154,7 +159,7 @@ class GPT3(LM):
 
     def __call__(
         self,
-        prompt: str,
+        prompt: list[dict[str, Any]],
         only_completed: bool = True,
         return_sorted: bool = False,
         **kwargs,

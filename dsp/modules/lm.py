@@ -71,7 +71,8 @@ class LM(ABC):
                 continue
 
             printing_value += "\n\n\n"
-            printing_value += prompt
+
+            printing_value += "\n\n".join([f'<{pt["role"]}>:\n\n{pt["content"]}' for pt in prompt])
 
             text = ""
             if provider == "cohere" or provider == "Bedrock" or provider == "Sagemaker":

@@ -7,7 +7,7 @@ from dsp.primitives.demonstrate import Example
 
 from .utils import format_answers, passages2text
 
-Field = namedtuple("Field", "name separator input_variable output_variable description")
+Field = namedtuple("Field", "name separator input_variable output_variable description input")
 
 # TODO: de-duplicate with dsp/templates/template.py
 
@@ -68,9 +68,9 @@ class TemplateV2:
 
             template = template[len(match.group(0)) :].strip()
 
-    def query(self, example: Example, is_demo: bool = False) -> str:
+    def query(self, example: Example, is_demo: bool = False) -> list[dict[str, Any]]:
         """Retrieves the input variables from the example and formats them into a query string."""
-        result: list[str] = []
+        result: list[dict[str, Any]] = []
 
         # If not a demo, find the last field that doesn't have a value set in `example` and set it to ""
         # This creates the "Output:" prefix at the end of the prompt.
@@ -92,6 +92,7 @@ class TemplateV2:
                         example[self.fields[i].input_variable] = ""
                         break
 
+        result_: list[dict[str, Any]] = []
         for field in self.fields:
             if field.input_variable in example and example[field.input_variable] is not None:
                 if field.input_variable in self.format_handlers:
@@ -105,13 +106,19 @@ class TemplateV2:
                 formatted_value = format_handler(example[field.input_variable])
                 separator = "\n" if field.separator == " " and "\n" in formatted_value else field.separator
 
-                result.append(
-                    f"{field.name}{separator}{formatted_value}",
-                )
+                result_.append({
+                    "role": "user" if field.input or not is_demo else "assistant",
+                    "content": f"{field.name}{separator}{formatted_value}"
+                })
 
-        if self._has_augmented_guidelines() and (example.get("augmented", False)):
-            return "\n\n".join([r for r in result if r])
-        return "\n".join([r for r in result if r])
+        user_content = "\n\n".join([r["content"] for r in result_ if r["role"] == "user"])
+        assistant_content = "\n\n".join([r["content"] for r in result_ if r["role"] == "assistant"])
+
+        if user_content:
+            result.append({"role": "user", "content": user_content})
+        if assistant_content:
+            result.append({"role": "assistant", "content": assistant_content})
+        return result
 
     def guidelines(self, show_guidelines=True) -> str:
         """Returns the task guidelines as described in the lm prompt"""
@@ -125,7 +132,7 @@ class TemplateV2:
             example[field.input_variable] = field.description
         example.augmented = self._has_augmented_guidelines()
 
-        result += self.query(example)
+        result += "\n\n".join([r["content"] for r in self.query(example)])
         return result
 
     def _has_augmented_guidelines(self):
@@ -196,7 +203,7 @@ class TemplateV2:
 
         return example
 
-    def __call__(self, example, show_guidelines=True) -> str:
+    def __call__(self, example, show_guidelines=True) -> list[dict[str, Any]]:
         example = dsp.Example(example)
 
         if hasattr(dsp.settings, "query_only") and dsp.settings.query_only:
@@ -223,7 +230,8 @@ class TemplateV2:
         rdemos_ = []
         new_ademos = []
         for rdemo in rdemos:
-            if all((field.name in rdemo) for field in self.fields if field.input_variable in example):
+            rdemo_content = "\n\n".join([r["content"] for r in rdemo])
+            if all((field.name in rdemo_content) for field in self.fields if field.input_variable in example):
                 import dspy
 
                 if dspy.settings.release >= 20230928:
@@ -233,8 +241,12 @@ class TemplateV2:
             else:
                 rdemos_.append(rdemo)
 
-        ademos = new_ademos + ademos
+        new_ademos.extend(ademos)
+        ademos = new_ademos
         rdemos = rdemos_
+
+        ademos = [item for sublist in ademos for item in sublist]
+        rdemos = [item for sublist in rdemos for item in sublist]
 
         long_query = self._has_augmented_guidelines()
 
@@ -244,38 +256,33 @@ class TemplateV2:
         query = self.query(example)
 
         # if it has more lines than fields
-        if len(query.split("\n")) > len(self.fields):
+        if len(query) > len(self.fields):
             long_query = True
 
             if not example.get("augmented", False):
                 example["augmented"] = True
                 query = self.query(example)
 
-        rdemos = "\n\n".join(rdemos)
 
         if len(rdemos) >= 1 and len(ademos) == 0 and not long_query:
-            rdemos_and_query = "\n\n".join([rdemos, query])
             parts = [
                 self.instructions,
                 self.guidelines(show_guidelines),
-                rdemos_and_query,
             ]
+            user_content = "\n\n---\n\n".join([p.strip() for p in parts if p])
         elif len(rdemos) == 0:
             parts = [
                 self.instructions,
                 self.guidelines(show_guidelines),
-                *ademos,
-                query,
             ]
+            user_content = "\n\n---\n\n".join([p.strip() for p in parts if p])
         else:
+            rdemos = "\n\n".join([r["content"] for r in rdemos])
             parts = [
                 self.instructions,
                 rdemos,
                 self.guidelines(show_guidelines),
-                *ademos,
-                query,
             ]
+            user_content = "\n\n---\n\n".join([p.strip() for p in parts if p])
 
-        prompt = "\n\n---\n\n".join([p.strip() for p in parts if p])
-
-        return prompt.strip()
+        return [{"role": "user", "content": user_content}, {"role": "assistant", "content": "OK, I'm ready."}, *ademos, *query]

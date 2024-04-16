@@ -44,6 +44,7 @@ class Template(TemplateV2):
                 input_variable=key,
                 output_variable=key,
                 separator=separator,
+                input=value.input,
             )
             self.fields.append(field)
 

@@ -49,6 +49,7 @@ class OldField:
         self.prefix = prefix  # This can be None initially and set later
         self.desc = desc
         self.format = format
+        self.input = input
 
     def finalize(self, key, inferred_prefix):
         """Set the prefix if it's not provided explicitly."""
